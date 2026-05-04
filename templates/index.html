@@ -1,11 +1,301 @@
-<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-    <title>Title</title>
-	<link href="www.test.com">
+  <meta charset="utf-8" />
+  <title>Location → Server</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 1rem; }
+    label { display:block; margin-top:0.5rem; }
+    pre { background:#f6f6f6; padding:8px; white-space:pre-wrap; }
+    button { margin-top:0.5rem; }
+
+        #compass {
+        position: relative;
+        width: 200px;
+        height: 200px;
+        margin: 20px 0;   /* ← left aligned (no auto centering) */
+        border: 4px solid #333;
+        border-radius: 50%;
+        background: radial-gradient(circle, #fff 60%, #ddd 100%);
+        }
+
+        /* Direction labels */
+        .compass-label {
+        position: absolute;
+        font-weight: bold;
+        font-size: 14px;
+        }
+
+        .label-n { top: 5px; left: 50%; transform: translateX(-50%); }
+        .label-s { bottom: 5px; left: 50%; transform: translateX(-50%); }
+        .label-e { right: 5px; top: 50%; transform: translateY(-50%); }
+        .label-w { left: 5px; top: 50%; transform: translateY(-50%); }
+
+        #compass-needle {
+        position: absolute;
+        width: 4px;
+        height: 90px;
+        background: red;
+        top: 10px;
+        left: 50%;
+        transform-origin: bottom center;
+        transform: translateX(-50%) rotate(0deg);
+        transition: none;
+        }
+
+        #compass-center {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        background: black;
+        border-radius: 50%;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        }
+
+  </style>
 </head>
 <body>
-	<h1>H1</h1>
-	
+  <h1>Radio Compass</h1>
+
+  <h4>Direction/heading :</h4>
+  <pre id="direction">Ready.</pre>
+
+  <h4>Compass :</h4>
+  <div id="compass">
+    <div class="compass-label label-n">N</div>
+    <div class="compass-label label-s">S</div>
+    <div class="compass-label label-e">E</div>
+  <div class="compass-label label-w">W</div>
+
+  <div id="compass-needle"></div>
+  <div id="compass-center"></div>
+</div>
+
+  <h4>Latitude/longitude :</h4>
+  <pre id="location">No location available.</pre>
+
+  <h4>Distance (km) :</h4>
+
+  <label>
+     <input id="distance" type="number" step="any" min="0" value="1">
+  </label>
+  
+  <button id="computeBtn" style="margin: 20px 0 20px 0;font-size: 20px;background:#007bff;color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;">Compute </button>
+ 
+  <h4>Results :</h4>
+
+  <label style="display:inline-block; margin-right:8px;">Closest station:</label>
+  <span id="name" style="display:inline-block; white-space:nowrap;"> </span>
+  
+  <label>Tune in :</label>
+  <a id="station_link"></a>
+
+  <h4>Status/Log :</h4>
+  <pre id="status">Ready.</pre>
+
+<script>
+const statusEl = document.getElementById('status');
+const directionEl = document.getElementById('direction');
+const locationEl = document.getElementById('location');
+const nameEl = document.getElementById('name');
+const linkEL = document.createElement('a');
+const computeBtn = document.getElementById('computeBtn');
+
+const needleEl = document.getElementById('compass-needle');
+
+let lastHeading = null;
+let lastCoords = null;
+
+function setStatus(msg) { statusEl.textContent = msg; }
+function setDirection(msg) { directionEl.textContent = msg; }
+function setLocation(msg) { locationEl.textContent = msg; }
+
+//heading smoothing etc
+
+let smoothedHeading = null;
+
+const SMOOTHING = 0.04;
+const DEAD_ZONE = 10;
+const MAX_STEP = 150;
+
+function handleOrientation(e) {
+  let rawHeading;
+
+  if (e.webkitCompassHeading !== undefined) {
+    rawHeading = e.webkitCompassHeading;
+  } else if (e.alpha !== null) {
+    rawHeading = (e.alpha + 360) % 360;
+  } else {
+    return;
+  }
+
+  // Ignore bad tilt
+  if (Math.abs(e.beta) > 60 || Math.abs(e.gamma) > 60) return;
+
+  if (smoothedHeading === null) {
+    smoothedHeading = rawHeading;
+  }
+
+  let diff = rawHeading - smoothedHeading;
+
+  diff = ((diff + 540) % 360) - 180;
+
+  //if (diff > 180) diff -= 360;
+  //if (diff < -180) diff += 360;
+
+  // Ignore tiny jitter
+  if (Math.abs(diff) < DEAD_ZONE) return;
+
+  // Clamp big spikes
+  if (Math.abs(diff) > MAX_STEP) {
+    diff = Math.sign(diff) * MAX_STEP;
+  }
+
+  smoothedHeading += diff * SMOOTHING;
+  smoothedHeading = (smoothedHeading + 360) % 360;
+
+  setDirection('Direction/Heading: ' + smoothedHeading.toFixed(1) + '°');
+
+  needleEl.style.transform =
+    `translateX(-50%) rotate(${smoothedHeading}deg)`;
+}
+
+async function requestOrientationPermissionIfNeeded() {
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const resp = await DeviceOrientationEvent.requestPermission();
+      if (resp === 'granted') {
+        window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        setStatus('Orientation permission granted.');
+      } else {
+        setStatus('Orientation permission denied.');
+      }
+    } catch (err) {
+      setStatus('Orientation permission error.');
+    }
+  } else {
+    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+    window.addEventListener('deviceorientation', handleOrientation, true);
+  }
+}
+
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('Geolocation not supported'));
+    navigator.geolocation.getCurrentPosition(pos => {
+      lastCoords = {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        heading_from_geo: pos.coords.heading
+      };
+      setLocation('Location: ' + lastCoords.latitude.toFixed(6) + ', ' + lastCoords.longitude.toFixed(6));
+      resolve(lastCoords);
+    }, err => reject(err), { enableHighAccuracy: true, timeout: 10000 });
+  });
+}
+
+computeBtn.addEventListener('click', async () => {
+  setStatus('Requesting orientation permission if needed...');
+  await requestOrientationPermissionIfNeeded();
+
+  try {
+    setStatus('Requesting location...');
+    await getLocation();
+  } catch (e) {
+    setStatus('Location error: ' + (e.message || e));
+    return;
+  }
+
+  const distKm = parseFloat(document.getElementById('distance').value) || 0;
+
+  const payload = {
+    latitude: lastCoords.latitude,
+    longitude: lastCoords.longitude,
+    heading: lastCoords.heading_from_geo ?? lastHeading,
+    distance_km: distKm,
+  };
+
+  setStatus('Sending to server...');
+
+  try {
+    const resp = await fetch('/compute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) throw new Error('Server error ' + resp.status);
+    const data = await resp.json();
+    const closest_name = data.closest_name;
+    const closest_url = data.closest_url;
+
+    setStatus('Done.');
+    nameEl.textContent = closest_name;
+    
+    //stuff for the url
+    linkEL.href = closest_url;
+    linkEL.textContent = closest_url;
+    linkEL.target = '_blank';
+    linkEL.rel = 'noopener';
+    document.getElementById('station_link').replaceWith(linkEL);
+
+  } catch (err) {
+    setStatus('Send error: ' + err);
+    statusEl.textContent = 'Error sending to server.';
+  }
+});
+
+if (typeof DeviceOrientationEvent !== 'undefined') {
+  window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+  window.addEventListener('deviceorientation', handleOrientation, true);
+}
+
+// --- geolocation watch ---
+let geoWatchId = null;
+
+function handleLocationUpdate(pos) {
+  const c = pos.coords;
+  lastCoords = {
+    latitude: c.latitude,
+    longitude: c.longitude,
+    accuracy_m: c.accuracy,
+    altitude: c.altitude,
+    altitudeAccuracy_m: c.altitudeAccuracy,
+    speed_m_s: c.speed,
+    heading_from_geo: c.heading
+  };
+  setLocation('Location updated: ' + lastCoords.latitude.toFixed(6) + ', ' + lastCoords.longitude.toFixed(6));
+}
+
+function startLocationWatch() {
+  if (!navigator.geolocation) {
+    setStatus('Geolocation not supported');
+    return;
+  }
+  if (geoWatchId !== null) return setStatus('Location watch already running');
+  geoWatchId = navigator.geolocation.watchPosition(
+    handleLocationUpdate,
+    (err) => setStatus('Location watch error: ' + (err.message || err.code)),
+    { enableHighAccuracy: true, maximumAge: 10000, timeout: 10000 }
+  );
+}
+
+function stopLocationWatch() {
+  if (geoWatchId !== null) {
+    navigator.geolocation.clearWatch(geoWatchId);
+    geoWatchId = null;
+    setStatus('Location watch stopped');
+  } else {
+    setStatus('No active location watch');
+  }
+}
+
+// start watching
+startLocationWatch();
+
+</script>
 </body>
 </html>
