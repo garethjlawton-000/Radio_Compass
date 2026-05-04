@@ -1,5 +1,5 @@
 import flask
-import request
+from flask import Flask, request
 import jsonify
 import api_to_file
 import geo
