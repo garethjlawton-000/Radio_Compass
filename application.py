@@ -1,4 +1,3 @@
-import flask
 from flask import Flask, request, jsonify
 import api_to_file
 import geo
